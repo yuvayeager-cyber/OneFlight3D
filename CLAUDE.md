@@ -97,21 +97,38 @@ Parallel safety net (independent of the pipeline above):
 - **Local synthetic verification completed 2026-09-22:** Stage 4 alignment
   and PLY/COLMAP/confidence exports passed on generated test data. This is a
   crash/interface smoke test only, never an accuracy or performance result.
-- **Stages 1–3 have not run on real data.** Video extraction, YOLO masking,
-  VGGT schema, and all full-pipeline claims remain unverified.
+- **Real image-set Stage 1 was run 2026-09-22.** The 17-image ODM Banana set
+  was correctly rejected because every image lacked the required GPS EXIF;
+  no coordinates were invented. The 18-image Brighton Beach set produced
+  `frames_meta.csv` successfully. In an orchestrated local run, its EXIF
+  stage passed in 0.70 s and Stage 2 then failed in 0.98 s because
+  `ultralytics` is not installed. `run_pipeline.py` now records that failed
+  stage and timing in `timing_report.json`, and supports `--image_dir` for
+  GPS-EXIF image sets as well as video plus telemetry.
+- **Real video Stage 1 has not run.** No video plus telemetry input has been
+  supplied on this host. YOLO masking has reached its missing-dependency
+  check but has not masked a real image, and Stage 3 was not attempted after
+  that failure and because this host has no CUDA-capable PyTorch/VGGT runtime.
+  Therefore no full-pipeline output claim is verified.
 - **VGGT's output dict key names are unverified** against the installed package version.
   `03_run_vggt.py` must print `predictions.keys()` and Stage 4/5 key names must be
   checked against the real output before being trusted.
 - **Required output writers are implemented but not all locally exercised.**
   Stage 5 has paths for OBJ, PLY, LAS, GeoTIFF DSM, GLB/glTF, FBX, and COLMAP.
-  The local run only validated PLY/COLMAP because this host lacks Open3D and
-  its Application Control policy prevents `pyproj`/GDAL native DLL loading;
-  LAS, GeoTIFF, and mesh formats require a normal GIS/3D host test.
+  The local synthetic run validated PLY/COLMAP only. The initial strict
+  preflight saw transient 15-second `pyproj`/`rasterio` import timeouts, but a
+  repeat strict preflight passed both packages. Open3D remains absent; LAS,
+  GeoTIFF, and mesh formats still require a real Stage 3-data test.
 - **No accuracy number has been measured.** Plan: benchmark against the Shahbazi et al.
   UAV gravel-pit dataset (158 images, 109 real surveyed GCPs/checkpoints), subsampled to
   simulate single-pass overlap, and report real RMSE. Never assert an accuracy figure
-  that hasn't actually been measured.
-- **No GPU access secured yet** (this host has no CUDA/GPU tooling).
+  that hasn't actually been measured. Brighton Beach has no surveyed-GCP file,
+  so this session could not run `benchmark_accuracy.py` or report RMSE.
+- **This host is not a GPU/ODM execution environment.** The repeated
+  2026-09-22 strict preflight found 8.59 GB free of the requested 10 GB, no
+  PyTorch/VGGT, `ultralytics`, Docker, `nvidia-smi`, or CUDA GPU. A pinned CUDA
+  12.1 VGGT `Dockerfile.vggt` and an exact Colab T4 cell-by-cell runbook now
+  exist in `docs/COLAB.md`; neither has been run on a GPU yet.
 - **gsplat/Nerfstudio training pass** is designed (COLMAP export exists) but has never
   been run.
 - **Viewer is implemented as an offline static tool** (`viewer/`): GLB/glTF
@@ -128,9 +145,10 @@ Parallel safety net (independent of the pipeline above):
 - CLI scripts live in `scripts/`, numbered by pipeline stage (`01_...` through `06_...`).
   Shared math/helpers live in `utils/` (e.g. `geo_utils.py` for ENU conversion and the
   Umeyama solver).
-- Every script takes real CLI args (`--video`, `--telemetry`, `--fps`, `--max_frames`,
-  etc.) — never hardcode a path or filename. The point of this system is that it works
-  on *any* single-pass drone video, not one pre-tested file.
+- Every script takes real CLI args (`--video`, `--telemetry`, `--image_dir`, `--fps`,
+  `--max_frames`, etc.) — never hardcode a path or filename. The point of this
+  system is that it works on a single-pass drone video or a GPS-EXIF image set,
+  not one pre-tested input.
 - Before trusting any third-party model's output structure (VGGT, YOLO, etc.), print and
   verify its actual keys/shape on real data — don't assume field names from
   documentation or memory.
@@ -152,19 +170,17 @@ system as demo-ready for military use as-is.
 
 ## Recommended next steps (in order)
 
-1. Test the VGGT Hugging Face demo on a small public sample set (e.g. OpenDroneMap's
-   `banana` set) — a five-minute feasibility gut-check before more engineering time.
-2. Secure GPU access (Colab/Kaggle/RunPod, or ask organizers for sponsor credits).
-3. In parallel, get a basic OpenDroneMap run working on sample data — the safety net,
-   not optional.
-4. Run Stages 1–3 on a small real/sample dataset; print and record VGGT's actual output
+1. Follow `docs/COLAB.md` on a Colab T4 (or an equivalent CUDA host) with the
+   Brighton Beach GPS-EXIF set; record the actual Stage 2/3 results.
+2. Inspect and record VGGT's actual output
    keys; fix Stage 4/5 key names to match.
-5. Add the missing required export formats (GeoTIFF, .glb/.gltf, .fbx, LAS) — currently
-   the single biggest gap against the official grading rubric.
-6. Run the pipeline against the Shahbazi gravel-pit GCP dataset (subsampled) and compute
+3. Complete Stages 4–6 with those predictions and record generated files and
+   the consolidated timing report.
+4. Run OpenDroneMap against the Brighton Beach image set in Docker as the
+   independent fallback.
+5. Run the pipeline against the Shahbazi gravel-pit GCP dataset (subsampled) and compute
    a real RMSE.
-7. Wire Stage 5's `write_colmap_text()` into a real glue script and run an actual
+6. Wire Stage 5's `write_colmap_text()` into a real glue script and run an actual
    gsplat/splatfacto training pass end-to-end.
-8. Build the browser viewer (Three.js or Potree) with the confidence overlay toggle.
-9. Add the LLM copilot chat layer over scene metadata.
+7. Visually exercise the existing static viewer with a real exported asset.
 10. Only if time remains: progressive/live batch-based reconstruction.
