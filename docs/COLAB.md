@@ -138,6 +138,16 @@ For a video run, invoke `run_pipeline.py`; it writes the required consolidated
 Do not compare an image-set timing to the <15-minute / 10-minute-video target.
 Only a timed, 10-minute video run can test that requirement.
 
+`run_pipeline.py` also accepts `--image_dir` and runs the GPS-EXIF adapter as
+Stage 1. This is the one-command image-set mode for a clean rerun, and it
+persists `timing_report.json` even if a later stage fails:
+
+```bash
+!python scripts/run_pipeline.py \
+  --image_dir "$IMAGE_DIR" --output_dir runs/brighton-full --device cuda --formats all
+!cat runs/brighton-full/timing_report.json
+```
+
 ## Cell 7 — benchmark only with surveyed checkpoints
 
 Run this only after supplying a GCP CSV in the exact CRS of the aligned points:
