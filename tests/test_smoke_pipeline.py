@@ -42,7 +42,11 @@ class SmokePipelineTests(unittest.TestCase):
             )
             with np.load(run_dir / "aligned_points.npz") as data:
                 self.assertGreater(len(data["points"]), 100)
-                self.assertEqual(str(data["crs_definition"][0]), "EPSG:32643")
+                # The no-pyproj fallback stores an EPSG token while pyproj
+                # serializes the same CRS as WKT.  Validate the authoritative
+                # numeric EPSG value and accept either interoperable encoding.
+                self.assertEqual(int(data["utm_epsg"][0]), 32643)
+                self.assertIn("32643", str(data["crs_definition"][0]))
             self.assertTrue((run_dir / "exports" / "cloud.ply").is_file())
             self.assertTrue((run_dir / "exports" / "confidence_cloud.ply").is_file())
             self.assertTrue((run_dir / "exports" / "colmap" / "cameras.txt").is_file())
