@@ -185,4 +185,4 @@ system as demo-ready for military use as-is.
 6. Wire Stage 5's `write_colmap_text()` into a real glue script and run an actual
    gsplat/splatfacto training pass end-to-end.
 7. Visually exercise the existing static viewer with a real exported asset.
-10. Only if time remains: progressive/live batch-based reconstruction.
+8. Only if time remains: progressive/live batch-based reconstruction.
