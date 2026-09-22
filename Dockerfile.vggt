@@ -1,0 +1,32 @@
+# GPU runtime for OneFlight3D's YOLO + VGGT pipeline.
+# Build on a CUDA-capable Docker host, then pass --gpus all at runtime.
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG VGGT_COMMIT=a288dd0f14786c93483e45524328726ab7b1b4ce
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.10 python3-pip python3.10-distutils \
+        git ffmpeg libgl1 libglib2.0-0 ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    ln -sf /usr/bin/python3.10 /usr/local/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/local/bin/pip
+
+RUN python -m pip install --upgrade pip==24.2 setuptools==75.1.0 wheel==0.44.0 && \
+    python -m pip install \
+        torch==2.3.1 torchvision==0.18.1 \
+        --index-url https://download.pytorch.org/whl/cu121
+
+WORKDIR /workspace
+COPY requirements/gpu-runtime.txt /tmp/gpu-runtime.txt
+RUN python -m pip install -r /tmp/gpu-runtime.txt && \
+    python -m pip install --no-deps \
+        "git+https://github.com/facebookresearch/vggt.git@${VGGT_COMMIT}"
+
+COPY . /workspace
+CMD ["bash"]
