@@ -23,6 +23,8 @@ CORE_PACKAGES = ("numpy", "pandas", "cv2", "scipy", "pyproj", "PIL")
 EXPORT_PACKAGES = ("laspy", "rasterio", "open3d", "trimesh")
 VGGT_PACKAGES = ("torch", "vggt")
 YOLO_PACKAGES = ("ultralytics",)
+IMPORT_PROBE_TIMEOUT_SECONDS = 15
+IMPORT_PROBE_ATTEMPTS = 2
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,21 +59,38 @@ def package_status(name: str) -> dict[str, object]:
             result["version"] = "unknown"
         # A package can have metadata while a required native DLL is blocked.
         # Probe in a child so a bad native import cannot hang this preflight.
-        try:
-            probe = subprocess.run(
-                [sys.executable, "-c", f"import {name}"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-            )
+        # On this Windows host, pyproj/rasterio once timed out but immediately
+        # succeeded on a new process; the later five-process sample was
+        # 0.84-1.68 s. Keep the useful 15 s failure bound and retry once to
+        # distinguish that transient startup condition from a persistent hang.
+        for attempt in range(1, IMPORT_PROBE_ATTEMPTS + 1):
+            try:
+                probe = subprocess.run(
+                    [sys.executable, "-c", f"import {name}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=IMPORT_PROBE_TIMEOUT_SECONDS,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                if attempt == IMPORT_PROBE_ATTEMPTS:
+                    result.update(
+                        available=False,
+                        error=(
+                            f"import probe timed out after {IMPORT_PROBE_TIMEOUT_SECONDS} "
+                            f"seconds on {IMPORT_PROBE_ATTEMPTS} attempts"
+                        ),
+                    )
+                continue
+
             if probe.returncode:
                 result.update(
                     available=False,
                     error=(probe.stderr or probe.stdout).strip().splitlines()[-1],
                 )
-        except subprocess.TimeoutExpired:
-            result.update(available=False, error="import probe timed out after 15 seconds")
+            elif attempt > 1:
+                result["import_probe_recovered_on_attempt"] = attempt
+            break
     return result
 
 
