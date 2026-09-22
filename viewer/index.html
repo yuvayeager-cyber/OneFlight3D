@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OneFlight3D Viewer</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./vendor/three.module.js",
+          "three/addons/": "./vendor/addons/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <aside>
+      <h1>OneFlight3D</h1>
+      <p class="subtitle">Georeferenced reconstruction viewer</p>
+      <label class="file-control">
+        Choose output folder
+        <input id="folder-input" type="file" webkitdirectory multiple />
+      </label>
+      <label class="file-control">
+        Choose model / point cloud
+        <input id="model-input" type="file" accept=".glb,.gltf,.ply" multiple />
+      </label>
+      <p id="load-status" class="status">Choose a pipeline export folder containing model.glb or cloud.ply.</p>
+      <hr />
+      <button id="confidence-toggle" type="button" disabled>Show confidence overlay</button>
+      <button id="measure-toggle" type="button" disabled>Measure distance</button>
+      <button id="clear-measurement" type="button" disabled>Clear measurement</button>
+      <p id="measurement" class="measurement">Measurement: choose two points.</p>
+      <hr />
+      <p class="hint">Drag to orbit · right-drag to pan · wheel to zoom</p>
+      <p class="hint">Confidence: green = observed/high confidence; red = inferred/low confidence.</p>
+      <p class="hint">Coordinates and distances use the metres in the exported geometry. Confirm the run’s alignment report before operational use.</p>
+    </aside>
+    <main id="viewport" aria-label="3D model viewport"></main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

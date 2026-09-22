@@ -17,11 +17,40 @@ image overlap, or physical Ground Control Points.
 | Spatial accuracy | ≤ 1 m |
 | Output formats | OBJ, PLY, LAS, GeoTIFF, .glb/.gltf, .fbx |
 
+## Verified status (2026-09-22)
+
+This repository now contains the six-stage implementation, a static viewer,
+an EXIF image adapter, an ODM Docker wrapper, and a synthetic smoke-test path.
+The latest local verification deliberately made **no** accuracy, completeness,
+or speed claim:
+
+- Passed: Umeyama solver, northern/southern UTM selection, synthetic Stage 4
+  alignment, PLY/COLMAP/confidence export, Python compilation, and viewer JS
+  syntax.
+- Not verified: a real video/telemetry run, YOLO inference, VGGT output schema,
+  mesh reconstruction, GLB/glTF/FBX, Docker/ODM, real LAS/GeoTIFF output, and
+  a surveyed-GCP accuracy benchmark.
+- Local blocker: this Windows host has no CUDA GPU or Docker, less than the
+  10 GB recommended free space, and its Application Control policy blocks the
+  native `pyproj` and GDAL/rasterio DLLs. The pipeline uses a built-in WGS84
+  ENU/UTM fallback for alignment, but a production machine should use a normal
+  supported Python/GIS environment.
+
+Do not claim the PS targets until a real flight data set and independently
+surveyed checkpoints have been processed and recorded.
+
 ## Prerequisites
 
 - **Python 3.10+**
 - **CUDA-capable GPU** (VGGT and YOLOv8 require GPU for practical speed)
 - **Docker** (optional — only for the OpenDroneMap fallback pipeline)
+
+Run this before a demo. It writes a transparent machine-readable report and
+does not install or download anything:
+
+```bash
+python scripts/check_environment.py --output_dir output/preflight --strict
+```
 
 ## Installation
 
@@ -78,6 +107,32 @@ python scripts/01_extract_frames.py \
     --max_frames 300
 ```
 
+### Image-set adapter (GPS in EXIF)
+
+For a UAV image set such as an ODM sample, create the same `frames/` and
+`frames_meta.csv` contract that Stage 1 produces. The adapter stages images in
+`output/frames` using hard links by default (and safely falls back to copies
+when hard links are unavailable), so Stages 2–6 remain unchanged.
+
+```bash
+python scripts/extract_exif_metadata.py \
+    --input_dir path/to/gps_tagged_images \
+    --output_dir output/
+```
+
+### Synthetic smoke test (not a benchmark)
+
+This lets Stages 4–6 be exercised without UAV imagery, GPU, or VGGT. Its
+outputs are explicitly labelled synthetic and must never be presented as a
+reconstruction or accuracy result.
+
+```bash
+python scripts/generate_synthetic_smoke_data.py --output_dir work/smoke
+python scripts/04_gps_alignment.py --predictions work/smoke/vggt_predictions.npz --frames_meta work/smoke/frames_meta.csv --output_file work/smoke/aligned_points.npz
+python scripts/05_export_formats.py --aligned_points work/smoke/aligned_points.npz --frames_meta work/smoke/frames_meta.csv --output_dir work/smoke/exports --formats ply,colmap
+python scripts/06_confidence_export.py --aligned_points work/smoke/aligned_points.npz --output_dir work/smoke/exports
+```
+
 ### Stage 2 — Dynamic Object Masking (YOLOv8n)
 
 ```bash
@@ -130,6 +185,21 @@ python scripts/odm_fallback.py \
     --output_dir output/odm_output/
 ```
 
+The input images must retain GPS EXIF. The wrapper stages them into the ODM
+project, runs `opendronemap/odm`, and writes `odm_report.json` with its measured
+runtime and output checks. Validate the command first without Docker:
+
+```bash
+python scripts/odm_fallback.py --frames_dir output/frames --output_dir output/odm_output --dry_run
+```
+
+### Web viewer
+
+The offline static viewer is in [`viewer/`](viewer/README.md). It loads a
+selected run folder, prioritizes GLB/glTF then falls back to PLY, supports the
+confidence overlay, orbit/pan/zoom, and two-point metre measurements. See its
+README for serving instructions; all required Three.js files are vendored.
+
 ## Output Directory Structure
 
 ```
@@ -177,8 +247,10 @@ the pipeline's auto-detected UTM zone).
   with a GPU. The code logs the real schema on first run.
 - **No accuracy number has been measured yet.** The benchmark harness exists
   but requires the Shahbazi et al. gravel-pit dataset or equivalent.
-- **FBX export** requires either `pyfbx` or Blender installed headlessly.
-  If neither is available, FBX export is skipped with a warning.
+- **Mesh/FBX export** requires Open3D plus either a functioning trimesh FBX
+  writer or Blender on `PATH`. The exporter now tries trimesh then a real
+  Blender-headless OBJ-to-FBX fallback. If neither route works, it skips FBX
+  with a precise warning rather than producing a corrupt placeholder.
 - **VGGT licensing**: the research checkpoint is non-commercial; the commercial
   checkpoint excludes military applications. See CLAUDE.md for details.
 

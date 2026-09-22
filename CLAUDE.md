@@ -50,18 +50,17 @@ Drone video + GPS/telemetry
         │   vggt_predictions.npz + frames_meta.csv → aligned_points.npz
         ├──────────────────────────────┬─────────────────────────────┐
         ▼                              ▼
-[5] COLMAP export                [6] Confidence overlay export
-    scripts/05_export_and_splat.py    scripts/06_confidence_export.py
-    → cameras/images/points3D.txt     → confidence_cloud.ply (red=low, green=high)
+[5] Multi-format export           [6] Confidence overlay export
+    scripts/05_export_formats.py      scripts/06_confidence_export.py
+    → OBJ/PLY/LAS/GeoTIFF/glTF/        → confidence_cloud.ply
+      GLB/FBX/COLMAP (dependency-       (red=low, green=high)
+      gated; see verification status)
         │
         ▼
-    gsplat / Nerfstudio splatfacto (designed, not yet run)
-        → textured, renderable Gaussian Splat scene
-        ▼
-    Web viewer (Three.js/Potree) + AI copilot — not yet built
+    Static web viewer (viewer/) — implemented; browser interaction unverified
 
 Parallel safety net (independent of the pipeline above):
-    OpenDroneMap (ODM), Docker — not yet set up
+    OpenDroneMap (ODM), Docker — scripts/odm_fallback.py; container run unverified
     video frames + GPS → point cloud/mesh/orthomosaic
     Used ONLY as a fallback demo if the VGGT pipeline breaks
 ```
@@ -95,27 +94,32 @@ Parallel safety net (independent of the pipeline above):
 
 ## Current state / known gaps (be honest about these — don't paper over them)
 
-- **None of the six scripts have been run yet.** Everything below is unverified until
-  Stage 1–3 actually execute on real data.
+- **Local synthetic verification completed 2026-09-22:** Stage 4 alignment
+  and PLY/COLMAP/confidence exports passed on generated test data. This is a
+  crash/interface smoke test only, never an accuracy or performance result.
+- **Stages 1–3 have not run on real data.** Video extraction, YOLO masking,
+  VGGT schema, and all full-pipeline claims remain unverified.
 - **VGGT's output dict key names are unverified** against the installed package version.
   `03_run_vggt.py` must print `predictions.keys()` and Stage 4/5 key names must be
   checked against the real output before being trusted.
-- **Missing required output formats.** The PS requires OBJ, PLY, LAS, GeoTIFF, and
-  .glb/.gltf/.fbx. The pipeline currently only produces COLMAP text files and a
-  confidence-colored `.ply`. GeoTIFF (orthomosaic/DSM) and mesh formats (.glb/.fbx) are
-  not implemented anywhere yet.
+- **Required output writers are implemented but not all locally exercised.**
+  Stage 5 has paths for OBJ, PLY, LAS, GeoTIFF DSM, GLB/glTF, FBX, and COLMAP.
+  The local run only validated PLY/COLMAP because this host lacks Open3D and
+  its Application Control policy prevents `pyproj`/GDAL native DLL loading;
+  LAS, GeoTIFF, and mesh formats require a normal GIS/3D host test.
 - **No accuracy number has been measured.** Plan: benchmark against the Shahbazi et al.
   UAV gravel-pit dataset (158 images, 109 real surveyed GCPs/checkpoints), subsampled to
   simulate single-pass overlap, and report real RMSE. Never assert an accuracy figure
   that hasn't actually been measured.
-- **No GPU access secured yet** (Colab/Kaggle/RunPod/organizer credits — undecided).
+- **No GPU access secured yet** (this host has no CUDA/GPU tooling).
 - **gsplat/Nerfstudio training pass** is designed (COLMAP export exists) but has never
   been run.
-- **No web layer at all** — no upload UI, job/queue system, browser viewer, or AI
-  copilot. Today this is a CLI pipeline of scripts run one video at a time, not the
-  generic multi-user product the long-term vision describes.
-- **ODM fallback is not set up** — this should happen in parallel with VGGT work, not
-  after, per the "keep a working fallback for research-grade code under deadline" rule.
+- **Viewer is implemented as an offline static tool** (`viewer/`): GLB/glTF
+  primary loading, PLY fallback, confidence toggle, orbit/pan/zoom, and
+  two-point metre measurements. It has not been visually exercised on this
+  host because browser automation was unavailable.
+- **ODM wrapper is implemented but Docker is unavailable locally.** It needs
+  one verified run against a public GPS-EXIF sample before it is demo-ready.
 - **IMU / barometric altitude / RTK-PPK** — listed as optional PS inputs, not consumed
   by any code (GPS lat/lon/alt only, matched to frames by nearest timestamp).
 
