@@ -170,6 +170,15 @@ Brighton Beach has no GCP file in ODMdata, so it cannot produce an accuracy
 number. Never infer RMSE from the GPS-alignment residual: that residual uses
 the same camera/GPS correspondences that fitted the transform.
 
+## Bring the real-run artifacts back
+
+Before downloading the Colab results, collect them under the tracked
+convention described in [`runs/colab/README.md`](../runs/colab/README.md).
+It specifies the exact files needed to compare the real VGGT schema with
+Stages 4–5 and to preserve the actual timing and export evidence. The raw
+artifacts are intentionally Git-ignored because predictions and exports can
+be large.
+
 ## Docker alternative
 
 On a Linux host with NVIDIA Container Toolkit:
