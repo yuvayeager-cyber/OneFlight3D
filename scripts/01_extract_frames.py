@@ -66,6 +66,11 @@ def parse_args():
         help="Start extracting from this video time in seconds (default: 0.0)"
     )
     parser.add_argument(
+        "--video_start_timestamp", type=float, default=None,
+        help="Unix timestamp at video t=0. Defaults to the first telemetry timestamp. "
+             "Set this when telemetry begins before the recording."
+    )
+    parser.add_argument(
         "--image_format", type=str, default="jpg", choices=["jpg", "png"],
         help="Output image format (default: jpg)"
     )
@@ -171,7 +176,11 @@ def extract_frames(args):
 
     # Load telemetry
     telemetry_df = load_telemetry(str(telemetry_path))
-    video_start_timestamp = telemetry_df["timestamp"].iloc[0]
+    video_start_timestamp = (
+        args.video_start_timestamp
+        if args.video_start_timestamp is not None
+        else telemetry_df["timestamp"].iloc[0]
+    )
 
     # Open video
     cap = cv2.VideoCapture(str(video_path))
@@ -230,8 +239,10 @@ def extract_frames(args):
             frame_idx += 1
             continue
 
-        # Video time relative to start
-        video_time_sec = current_time - args.start_time
+        # ``current_time`` is always relative to video t=0.  Do not subtract
+        # --start_time: doing so would incorrectly match a clip beginning at
+        # 60 s to GPS records at the start of the flight.
+        video_time_sec = current_time
 
         # Find nearest GPS record
         gps_match = find_nearest_gps(video_time_sec, telemetry_df, video_start_timestamp)

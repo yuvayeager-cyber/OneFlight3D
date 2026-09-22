@@ -18,8 +18,11 @@ Output:
 import argparse
 import json
 import logging
+import shutil
 import struct
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -100,12 +103,12 @@ def export_ply(points, colors, output_path):
 # LAS Export
 # =============================================================================
 
-def export_las(points, colors, output_path, utm_zone=None):
+def export_las(points, colors, output_path, crs_definition=None):
     """Export georeferenced point cloud as LAS 1.4 with color."""
     try:
         import laspy
-    except ImportError:
-        log.warning("laspy not installed — skipping LAS export")
+    except Exception as error:
+        log.warning("LAS export unavailable (laspy could not load: %s)", error)
         return
 
     header = laspy.LasHeader(point_format=2, version="1.4")
@@ -115,15 +118,12 @@ def export_las(points, colors, output_path, utm_zone=None):
     header.offsets = mins
     header.scales = np.array([0.001, 0.001, 0.001])
 
-    # Set CRS via VLR if UTM zone is known
-    if utm_zone is not None:
+    # The alignment stage persists the exact CRS.  Do not guess a hemisphere
+    # from altitude (or from an axis of the transformed point cloud).
+    if crs_definition:
         try:
             from pyproj import CRS
-            mean_lat = 0  # Rough: sign of first z determines hemisphere
-            epsg = 32600 + utm_zone if points[:, 1].mean() >= 0 else 32700 + utm_zone
-            crs = CRS.from_epsg(epsg)
-            # GeoTIFF VLR for CRS
-            header.add_crs(crs)
+            header.add_crs(CRS.from_user_input(crs_definition))
         except Exception as e:
             log.warning("Could not embed CRS in LAS: %s", e)
 
@@ -144,13 +144,13 @@ def export_las(points, colors, output_path, utm_zone=None):
 # GeoTIFF DSM Export
 # =============================================================================
 
-def export_geotiff_dsm(points, output_path, resolution=0.5, utm_zone=None):
+def export_geotiff_dsm(points, output_path, resolution=0.5, crs_definition=None):
     """Rasterize point cloud to a Digital Surface Model GeoTIFF."""
     try:
         import rasterio
         from rasterio.transform import from_bounds
-    except ImportError:
-        log.warning("rasterio not installed — skipping GeoTIFF export")
+    except Exception as error:
+        log.warning("GeoTIFF export unavailable (rasterio could not load: %s)", error)
         return
 
     x, y, z = points[:, 0], points[:, 1], points[:, 2]
@@ -183,9 +183,8 @@ def export_geotiff_dsm(points, output_path, resolution=0.5, utm_zone=None):
 
     # Determine CRS
     crs_dict = None
-    if utm_zone is not None:
-        epsg = 32600 + utm_zone  # Assumes northern hemisphere; refine if needed
-        crs_dict = f"EPSG:{epsg}"
+    if crs_definition:
+        crs_dict = crs_definition
 
     with rasterio.open(
         str(output_path), "w",
@@ -209,8 +208,8 @@ def build_mesh(points, colors, depth=9):
     """
     try:
         import open3d as o3d
-    except ImportError:
-        log.warning("open3d not installed — skipping mesh reconstruction")
+    except Exception as error:
+        log.warning("Mesh reconstruction unavailable (Open3D could not load: %s)", error)
         return None
 
     log.info("Building mesh from %d points (Poisson depth=%d)...", len(points), depth)
@@ -263,8 +262,8 @@ def export_glb(mesh, output_path):
     """Export mesh as glTF binary using trimesh."""
     try:
         import trimesh
-    except ImportError:
-        log.warning("trimesh not installed — skipping glb export")
+    except Exception as error:
+        log.warning("GLB export unavailable (trimesh could not load: %s)", error)
         return
 
     vertices = np.asarray(mesh.vertices)
@@ -289,8 +288,8 @@ def export_gltf(mesh, output_path):
     """Export mesh as glTF text using trimesh."""
     try:
         import trimesh
-    except ImportError:
-        log.warning("trimesh not installed — skipping gltf export")
+    except Exception as error:
+        log.warning("glTF export unavailable (trimesh could not load: %s)", error)
         return
 
     vertices = np.asarray(mesh.vertices)
@@ -311,22 +310,79 @@ def export_gltf(mesh, output_path):
     log.info("GLTF exported: %s", output_path)
 
 
+def _write_obj_for_blender(mesh, output_path):
+    """Write a minimal OBJ without relying on a particular Open3D exporter."""
+    vertices = np.asarray(mesh.vertices)
+    triangles = np.asarray(mesh.triangles)
+    with open(output_path, "w", encoding="utf-8") as obj_file:
+        for vertex in vertices:
+            obj_file.write(f"v {vertex[0]:.9f} {vertex[1]:.9f} {vertex[2]:.9f}\\n")
+        for triangle in triangles:
+            obj_file.write(f"f {triangle[0] + 1} {triangle[1] + 1} {triangle[2] + 1}\\n")
+
+
+def _export_fbx_with_blender(mesh, output_path, blender_path):
+    """Convert a temporary OBJ to FBX using Blender in headless mode."""
+    with tempfile.TemporaryDirectory(prefix="oneflight3d_fbx_") as temp_dir:
+        temp_dir_path = Path(temp_dir)
+        source_obj = temp_dir_path / "model.obj"
+        script_path = temp_dir_path / "export_fbx.py"
+        _write_obj_for_blender(mesh, source_obj)
+        # JSON string literals make Windows paths safe inside Blender Python.
+        script_path.write_text(
+            "import bpy\\n"
+            "bpy.ops.wm.read_factory_settings(use_empty=True)\\n"
+            f"source = {json.dumps(str(source_obj))}\\n"
+            f"destination = {json.dumps(str(output_path))}\\n"
+            "if hasattr(bpy.ops.wm, 'obj_import'):\\n"
+            "    bpy.ops.wm.obj_import(filepath=source)\\n"
+            "else:\\n"
+            "    bpy.ops.import_scene.obj(filepath=source)\\n"
+            "bpy.ops.export_scene.fbx(filepath=destination, use_selection=False, "
+            "path_mode='COPY', embed_textures=True)\\n",
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            [blender_path, "--background", "--python", str(script_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if result.returncode != 0 or not output_path.exists():
+        details = (result.stderr or result.stdout).strip()[-1000:]
+        raise RuntimeError(f"Blender exited {result.returncode}: {details}")
+
+
 def export_fbx(mesh, output_path):
     """
     Export mesh as FBX. Requires pyfbx or Blender headless.
     Warns and skips if neither is available.
     """
+    trimesh_error = None
     try:
         import trimesh
         vertices = np.asarray(mesh.vertices)
         triangles = np.asarray(mesh.triangles)
         tmesh = trimesh.Trimesh(vertices=vertices, faces=triangles)
         tmesh.export(str(output_path), file_type="fbx")
-        log.info("FBX exported: %s", output_path)
+        if output_path.exists() and output_path.stat().st_size > 0:
+            log.info("FBX exported with trimesh: %s", output_path)
+            return
     except Exception as e:
+        trimesh_error = e
+
+    blender_path = shutil.which("blender")
+    if not blender_path:
         log.warning(
-            "FBX export failed (%s). Install pyfbx or Blender headless for FBX support.", e
+            "FBX export unavailable: trimesh failed (%s) and Blender was not found on PATH.",
+            trimesh_error or "no FBX writer",
         )
+        return
+    try:
+        _export_fbx_with_blender(mesh, output_path, blender_path)
+        log.info("FBX exported with Blender: %s", output_path)
+    except Exception as error:
+        log.warning("Blender FBX export failed: %s", error)
 
 
 # =============================================================================
@@ -446,7 +502,7 @@ def run_exports(args):
     confidence = data["confidence"]
     extrinsics = data["extrinsics"]
     intrinsics = data["intrinsics"]
-    utm_zone = int(data["utm_zone"][0]) if "utm_zone" in data else None
+    crs_definition = str(data["crs_definition"][0]) if "crs_definition" in data else None
 
     log.info("Loaded %d points, %d frames", len(points), extrinsics.shape[0])
 
@@ -476,11 +532,11 @@ def run_exports(args):
         export_ply(points, colors, output_dir / "cloud.ply")
 
     if "las" in formats:
-        export_las(points, colors, output_dir / "cloud.las", utm_zone)
+        export_las(points, colors, output_dir / "cloud.las", crs_definition)
 
     if "geotiff" in formats:
         export_geotiff_dsm(points, output_dir / "dsm.tif",
-                           resolution=args.dsm_resolution, utm_zone=utm_zone)
+                           resolution=args.dsm_resolution, crs_definition=crs_definition)
 
     if "colmap" in formats:
         export_colmap(extrinsics, intrinsics, points, colors,

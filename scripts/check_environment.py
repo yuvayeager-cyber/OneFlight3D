@@ -13,6 +13,7 @@ from importlib import metadata
 import json
 import platform
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,6 +55,23 @@ def package_status(name: str) -> dict[str, object]:
             result["version"] = metadata.version(distribution)
         except metadata.PackageNotFoundError:
             result["version"] = "unknown"
+        # A package can have metadata while a required native DLL is blocked.
+        # Probe in a child so a bad native import cannot hang this preflight.
+        try:
+            probe = subprocess.run(
+                [sys.executable, "-c", f"import {name}"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            if probe.returncode:
+                result.update(
+                    available=False,
+                    error=(probe.stderr or probe.stdout).strip().splitlines()[-1],
+                )
+        except subprocess.TimeoutExpired:
+            result.update(available=False, error="import probe timed out after 15 seconds")
     return result
 
 

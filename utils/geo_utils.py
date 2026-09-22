@@ -18,11 +18,19 @@ log = logging.getLogger("geo_utils")
 
 try:
     from pyproj import CRS, Transformer
-except ImportError:
-    log.warning(
-        "pyproj not installed — GPS coordinate transforms will fail. "
-        "Install with: pip install pyproj"
-    )
+    PYPROJ_AVAILABLE = True
+except Exception as error:  # Native GIS libraries can also fail to load.
+    CRS = Transformer = None
+    PYPROJ_AVAILABLE = False
+    log.warning("pyproj is unavailable (%s); using the built-in WGS84 projection fallback.", error)
+
+
+# WGS84 ellipsoid constants. The local formulas below avoid making ordinary
+# frame/GPS alignment depend on a platform-specific GDAL/PROJ shared library.
+WGS84_A = 6378137.0
+WGS84_F = 1 / 298.257223563
+WGS84_E2 = WGS84_F * (2 - WGS84_F)
+UTM_K0 = 0.9996
 
 
 # =============================================================================
@@ -54,14 +62,21 @@ def wgs84_to_enu(
     lon = np.asarray(lon, dtype=np.float64)
     alt = np.asarray(alt, dtype=np.float64)
 
-    # WGS84 → ECEF
-    crs_wgs84 = CRS.from_epsg(4326)  # WGS84 geographic
-    crs_ecef = CRS.from_epsg(4978)   # WGS84 ECEF (geocentric)
-    transformer_to_ecef = Transformer.from_crs(crs_wgs84, crs_ecef, always_xy=True)
+    # WGS84 → ECEF. Implemented directly because pyproj is not guaranteed to
+    # be importable on restricted laptops even when its wheel is installed.
+    def geodetic_to_ecef(lat_deg, lon_deg, height):
+        latitude = np.radians(lat_deg)
+        longitude = np.radians(lon_deg)
+        sin_latitude = np.sin(latitude)
+        cos_latitude = np.cos(latitude)
+        radius = WGS84_A / np.sqrt(1 - WGS84_E2 * sin_latitude**2)
+        x_value = (radius + height) * cos_latitude * np.cos(longitude)
+        y_value = (radius + height) * cos_latitude * np.sin(longitude)
+        z_value = (radius * (1 - WGS84_E2) + height) * sin_latitude
+        return x_value, y_value, z_value
 
-    # Convert all points to ECEF
-    x, y, z = transformer_to_ecef.transform(lon, lat, alt)
-    x_ref, y_ref, z_ref = transformer_to_ecef.transform(ref_lon, ref_lat, ref_alt)
+    x, y, z = geodetic_to_ecef(lat, lon, alt)
+    x_ref, y_ref, z_ref = geodetic_to_ecef(ref_lat, ref_lon, ref_alt)
 
     # ECEF → ENU rotation matrix at the reference point
     lat_r = np.radians(ref_lat)
@@ -88,7 +103,7 @@ def wgs84_to_enu(
 
 def auto_utm_zone(lon: float) -> int:
     """Determine UTM zone number from longitude."""
-    return int((lon + 180) / 6) + 1
+    return max(1, min(60, int((lon + 180) / 6) + 1))
 
 
 def wgs84_to_utm(
@@ -120,13 +135,43 @@ def wgs84_to_utm(
     mean_lat = float(np.mean(lat))
     hemisphere = "north" if mean_lat >= 0 else "south"
 
-    # Build UTM CRS
-    crs_wgs84 = CRS.from_epsg(4326)
     epsg_utm = 32600 + utm_zone if hemisphere == "north" else 32700 + utm_zone
-    crs_utm = CRS.from_epsg(epsg_utm)
-
-    transformer = Transformer.from_crs(crs_wgs84, crs_utm, always_xy=True)
-    easting, northing = transformer.transform(lon, lat)
+    if PYPROJ_AVAILABLE:
+        crs_wgs84 = CRS.from_epsg(4326)
+        crs_utm = CRS.from_epsg(epsg_utm)
+        transformer = Transformer.from_crs(crs_wgs84, crs_utm, always_xy=True)
+        easting, northing = transformer.transform(lon, lat)
+        crs_definition = crs_utm.to_wkt()
+    else:
+        # Standard Transverse Mercator series for WGS84 UTM. It is accurate
+        # enough for local UAV alignment and supplies a dependency-free path.
+        phi = np.radians(lat)
+        lambda_value = np.radians(lon)
+        lambda_origin = np.radians((utm_zone - 1) * 6 - 180 + 3)
+        e_prime_sq = WGS84_E2 / (1 - WGS84_E2)
+        n_radius = WGS84_A / np.sqrt(1 - WGS84_E2 * np.sin(phi)**2)
+        tangent_sq = np.tan(phi)**2
+        c_value = e_prime_sq * np.cos(phi)**2
+        a_value = np.cos(phi) * (lambda_value - lambda_origin)
+        meridional = WGS84_A * (
+            (1 - WGS84_E2 / 4 - 3 * WGS84_E2**2 / 64 - 5 * WGS84_E2**3 / 256) * phi
+            - (3 * WGS84_E2 / 8 + 3 * WGS84_E2**2 / 32 + 45 * WGS84_E2**3 / 1024) * np.sin(2 * phi)
+            + (15 * WGS84_E2**2 / 256 + 45 * WGS84_E2**3 / 1024) * np.sin(4 * phi)
+            - (35 * WGS84_E2**3 / 3072) * np.sin(6 * phi)
+        )
+        easting = UTM_K0 * n_radius * (
+            a_value + (1 - tangent_sq + c_value) * a_value**3 / 6
+            + (5 - 18 * tangent_sq + tangent_sq**2 + 72 * c_value - 58 * e_prime_sq) * a_value**5 / 120
+        ) + 500000.0
+        northing = UTM_K0 * (
+            meridional + n_radius * np.tan(phi) * (
+                a_value**2 / 2 + (5 - tangent_sq + 9 * c_value + 4 * c_value**2) * a_value**4 / 24
+                + (61 - 58 * tangent_sq + tangent_sq**2 + 600 * c_value - 330 * e_prime_sq) * a_value**6 / 720
+            )
+        )
+        if hemisphere == "south":
+            northing += 10_000_000.0
+        crs_definition = f"EPSG:{epsg_utm}"
 
     utm_coords = np.stack([easting, northing, alt], axis=-1)
 
@@ -139,7 +184,7 @@ def wgs84_to_utm(
         northing.min(), northing.max(),
     )
 
-    return utm_coords, utm_zone, crs_utm.to_wkt()
+    return utm_coords, utm_zone, crs_definition
 
 
 # =============================================================================

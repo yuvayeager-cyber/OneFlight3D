@@ -224,11 +224,14 @@ def run_alignment(args):
     alt = meta_df["altitude"].values
     ref_lat, ref_lon, ref_alt = float(lat[0]), float(lon[0]), float(alt[0])
 
-    utm_zone, utm_crs_wkt = None, ""
+    utm_zone, utm_crs_definition, utm_epsg = None, "", None
     if args.coordinate_system == "enu":
         gps_local = wgs84_to_enu(lat, lon, alt, ref_lat, ref_lon, ref_alt)
     else:
-        gps_local, utm_zone, utm_crs_wkt = wgs84_to_utm(lat, lon, alt)
+        gps_local, utm_zone, utm_crs_definition = wgs84_to_utm(lat, lon, alt)
+        # Preserve the exact CRS chosen upstream.  Exporters must never infer
+        # a hemisphere from an elevation or an arbitrary point-cloud axis.
+        utm_epsg = (32600 if float(np.mean(lat)) >= 0 else 32700) + utm_zone
 
     log.info("GPS local — min: %s, max: %s",
              gps_local.min(axis=0).round(3), gps_local.max(axis=0).round(3))
@@ -304,6 +307,8 @@ def run_alignment(args):
     }
     if utm_zone is not None:
         save_dict["utm_zone"] = np.array([utm_zone])
+        save_dict["utm_epsg"] = np.array([utm_epsg], dtype=np.int32)
+        save_dict["crs_definition"] = np.array([utm_crs_definition])
 
     np.savez_compressed(str(output_path), **save_dict)
     file_mb = output_path.stat().st_size / (1024 * 1024)
@@ -322,7 +327,8 @@ def run_alignment(args):
     }
     if utm_zone is not None:
         meta_json["utm_zone"] = utm_zone
-        meta_json["utm_crs_wkt"] = utm_crs_wkt
+        meta_json["utm_epsg"] = utm_epsg
+        meta_json["utm_crs_definition"] = utm_crs_definition
 
     meta_path = output_path.parent / "alignment_meta.json"
     with open(meta_path, "w") as f:

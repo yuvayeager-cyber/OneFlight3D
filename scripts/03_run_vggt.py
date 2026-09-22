@@ -22,6 +22,7 @@ Output:
 """
 
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -223,8 +224,11 @@ def run_vggt_inference(args):
     # Step 4: Run inference
     # -------------------------------------------------------------------------
     log.info("Running VGGT inference...")
+    # CUDA autocast is invalid for a CPU fallback. Keep CPU execution in the
+    # model's native precision; it is slow but gives an honest diagnostic path.
+    autocast = torch.autocast(device_type="cuda", dtype=dtype) if device == "cuda" else contextlib.nullcontext()
     with torch.no_grad():
-        with torch.cuda.amp.autocast(dtype=dtype):
+        with autocast:
             predictions = model(images)
 
     # -------------------------------------------------------------------------
