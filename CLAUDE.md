@@ -100,16 +100,18 @@ Parallel safety net (independent of the pipeline above):
 - **Real image-set Stage 1 was run 2026-09-22.** The 17-image ODM Banana set
   was correctly rejected because every image lacked the required GPS EXIF;
   no coordinates were invented. The 18-image Brighton Beach set produced
-  `frames_meta.csv` successfully. In an orchestrated local run, its EXIF
-  stage passed in 0.70 s and Stage 2 then failed in 0.98 s because
-  `ultralytics` is not installed. `run_pipeline.py` now records that failed
-  stage and timing in `timing_report.json`, and supports `--image_dir` for
-  GPS-EXIF image sets as well as video plus telemetry.
+  `frames_meta.csv` successfully. The first orchestrated local run passed its
+  EXIF stage in 0.70 s and then stopped at Stage 2 because `ultralytics` was
+  absent; `run_pipeline.py` recorded that failure in `timing_report.json`.
+  After installing `ultralytics` 8.4.158 with CPU PyTorch 2.14.0, a direct
+  Stage 2 run completed on all 18 Brighton frames, wrote `frames_masked/` and
+  `mask_report.json`, and detected six dynamic objects across five frames
+  (three cars, one person, one bird, and one bus). This verifies CPU masking
+  on real images only; it does not verify GPU execution or any later stage.
 - **Real video Stage 1 has not run.** No video plus telemetry input has been
-  supplied on this host. YOLO masking has reached its missing-dependency
-  check but has not masked a real image, and Stage 3 was not attempted after
-  that failure and because this host has no CUDA-capable PyTorch/VGGT runtime.
-  Therefore no full-pipeline output claim is verified.
+  supplied on this host. Stage 2 has masked real still images on CPU, but
+  Stage 3 was not attempted because this host has no CUDA-capable
+  PyTorch/VGGT runtime. Therefore no full-pipeline output claim is verified.
 - **VGGT's output dict key names are unverified** against the installed package version.
   `03_run_vggt.py` must print `predictions.keys()` and Stage 4/5 key names must be
   checked against the real output before being trusted.
