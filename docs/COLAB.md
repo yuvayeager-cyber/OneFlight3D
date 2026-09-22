@@ -99,12 +99,14 @@ Start with every other frame to control GPU memory. **Do not continue to Stage
   --device cuda --max_frames 18
 
 !cat runs/brighton/vggt_output_schema.json
+!python scripts/verify_vggt_schema.py runs/brighton/vggt_output_schema.json
 ```
 
-Compare the exact keys and shapes in `vggt_output_schema.json` against Stage 4
-(`extrinsics`, `intrinsics`, `world_points`, `world_points_conf`) before moving
-on. If any differ, save the schema and fix the code in a commit; do not rename
-the JSON or fake an NPZ field to conceal the mismatch.
+`verify_vggt_schema.py` is the gate before Stage 4: it reports each expected
+key and shape and exits non-zero on an incompatibility, with current source
+lines for the consuming Stage 4/5 code. If it fails, save the schema and fix
+the code in a commit; do not rename the JSON or fake an NPZ field to conceal
+the mismatch.
 
 ## Cell 6 — run the remaining pipeline stages and record timings
 
