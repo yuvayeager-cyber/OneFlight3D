@@ -60,14 +60,20 @@ guessed GPS to make the next stages run. That would invalidate metric alignment.
 ```
 
 The repository layout has changed in the past. Set `IMAGE_DIR` to the directory
-that directly contains the JPEGs (the command below finds the first candidate):
+that directly contains the image set. The selector below deliberately chooses
+the directory with the most JPEGs: the repository root also contains a preview
+JPEG, which is not a usable frame set.
 
 ```python
 from pathlib import Path
-candidates = [p for p in Path("data/brighton_beach").rglob("*") if p.is_dir() and any(x.suffix.lower() in {".jpg", ".jpeg"} for x in p.iterdir())]
-assert candidates, "No JPEG directory found; inspect the Cell 4 output."
-IMAGE_DIR = candidates[0]
-print(IMAGE_DIR)
+root = Path("data/brighton_beach")
+candidates = [
+    (path, sum(item.suffix.lower() in {".jpg", ".jpeg"} for item in path.iterdir()))
+    for path in root.rglob("*") if path.is_dir()
+]
+IMAGE_DIR, image_count = max(candidates, key=lambda item: item[1])
+assert image_count >= 3, "No image-set directory found; inspect the Cell 4 output."
+print(IMAGE_DIR, image_count)
 ```
 
 ```bash
