@@ -110,11 +110,26 @@ Parallel safety net (independent of the pipeline above):
   on real images only; it does not verify GPU execution or any later stage.
 - **Real video Stage 1 has not run.** No video plus telemetry input has been
   supplied on this host. Stage 2 has masked real still images on CPU, but
-  Stage 3 was not attempted because this host has no CUDA-capable
-  PyTorch/VGGT runtime. Therefore no full-pipeline output claim is verified.
-- **VGGT's output dict key names are unverified** against the installed package version.
-  `03_run_vggt.py` must print `predictions.keys()` and Stage 4/5 key names must be
-  checked against the real output before being trusted.
+  no real video pipeline has been run end-to-end.
+- **Real VGGT inference/schema was run on a Colab Tesla T4 on 2026-09-23.**
+  The Colab preflight reported CUDA available with PyTorch 2.11.0+cu128 and
+  VGGT 0.0.1. Stage 3 emitted a raw-model schema with the keys `depth`,
+  `depth_conf`, `images`, `pose_enc`, `pose_enc_list`, `world_points`, and
+  `world_points_conf`. The real dense shapes were `world_points`
+  `(1, 18, 294, 518, 3)`, `world_points_conf` `(1, 18, 294, 518)`, and
+  `images` `(1, 18, 3, 294, 518)`. This verifies raw model inference and
+  establishes that the model uses `pose_enc`, not raw `extrinsics`/
+  `intrinsics` fields.
+- **The first schema gate correctly exposed a Stage 4 boundary mismatch.**
+  Stage 3 decodes `pose_enc` before saving `extrinsics`/`intrinsics`, but the
+  old verifier incorrectly demanded those decoded fields in the raw-model
+  schema; Stage 4 also assumed no batch axis. Stage 4 now normalizes a
+  verified singleton leading batch axis from every consumed saved array and
+  rejects any other batch size or malformed shape. The verifier now checks
+  both the raw schema and the actual `vggt_predictions.npz` archive. The
+  corrected gate and Stage 4 adapter have passed synthetic batch-first tests,
+  but the real saved archive has not yet been inspected and Stage 4 has not
+  yet run on the Colab output.
 - **Required output writers are implemented but not all locally exercised.**
   Stage 5 has paths for OBJ, PLY, LAS, GeoTIFF DSM, GLB/glTF, FBX, and COLMAP.
   The local synthetic run validated PLY/COLMAP only. The initial strict
@@ -126,11 +141,10 @@ Parallel safety net (independent of the pipeline above):
   simulate single-pass overlap, and report real RMSE. Never assert an accuracy figure
   that hasn't actually been measured. Brighton Beach has no surveyed-GCP file,
   so this session could not run `benchmark_accuracy.py` or report RMSE.
-- **This host is not a GPU/ODM execution environment.** The repeated
+- **This local host is not a GPU/ODM execution environment.** Its repeated
   2026-09-22 strict preflight found 8.59 GB free of the requested 10 GB, no
-  PyTorch/VGGT, `ultralytics`, Docker, `nvidia-smi`, or CUDA GPU. A pinned CUDA
-  12.1 VGGT `Dockerfile.vggt` and an exact Colab T4 cell-by-cell runbook now
-  exist in `docs/COLAB.md`; neither has been run on a GPU yet.
+  PyTorch/VGGT, Docker, `nvidia-smi`, or CUDA GPU. Colab T4 has now run real
+  VGGT inference, but Docker/ODM has not run on either host.
 - **gsplat/Nerfstudio training pass** is designed (COLMAP export exists) but has never
   been run.
 - **Viewer is implemented as an offline static tool** (`viewer/`): GLB/glTF
@@ -172,11 +186,12 @@ system as demo-ready for military use as-is.
 
 ## Recommended next steps (in order)
 
-1. Follow `docs/COLAB.md` on a Colab T4 (or an equivalent CUDA host) with the
-   Brighton Beach GPS-EXIF set; record the actual Stage 2/3 results.
-2. Inspect and record VGGT's actual output
-   keys; fix Stage 4/5 key names to match.
-3. Complete Stages 4–6 with those predictions and record generated files and
+1. Pull the batch-normalization fix into the existing Colab checkout and run
+   `verify_vggt_schema.py` against both the saved raw schema and
+   `vggt_predictions.npz`; do not continue unless it passes.
+2. Run Stage 4 on the verified real archive, then inspect its alignment output
+   and diagnostics.
+3. Complete Stages 5–6 with that aligned output and record generated files and
    the consolidated timing report.
 4. Run OpenDroneMap against the Brighton Beach image set in Docker as the
    independent fallback.
