@@ -125,6 +125,79 @@ def transform_extrinsics(extrinsics: np.ndarray, s: float,
     return out
 
 
+def canonicalize_vggt_array(name: str, values: np.ndarray, dimensions: int,
+                            trailing_dimensions: tuple[int, ...]) -> np.ndarray:
+    """Remove VGGT's verified singleton batch axis and validate the result.
+
+    The first real Colab VGGT schema used ``(1, frames, ...)`` dense tensors.
+    Stage 3 writes those tensors into the NPZ after decoding poses, while this
+    stage operates one image sequence at a time as ``(frames, ...)``. A batch
+    larger than one cannot be aligned against one frames_meta.csv and is
+    rejected.
+    """
+    array = np.asarray(values)
+    if array.ndim == dimensions + 1:
+        if array.shape[0] != 1:
+            raise ValueError(
+                f"{name} has batch shape {array.shape}; Stage 4 accepts only a "
+                "single image sequence (batch size 1)."
+            )
+        log.info("Removing singleton VGGT batch axis from %s: %s", name, array.shape)
+        array = array[0]
+
+    if array.ndim != dimensions:
+        raise ValueError(
+            f"{name} must have {dimensions} dimensions after batch normalization; "
+            f"found shape {array.shape}."
+        )
+    if trailing_dimensions and tuple(array.shape[-len(trailing_dimensions):]) != trailing_dimensions:
+        raise ValueError(
+            f"{name} must end in dimensions {trailing_dimensions}; found shape {array.shape}."
+        )
+    return array
+
+
+def canonicalize_vggt_predictions(pred: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Validate the Stage 3 prediction archive at the Stage 4 input boundary."""
+    required = {
+        "extrinsics": (3, (3, 4)),
+        "intrinsics": (3, (3, 3)),
+        "world_points": (4, (3,)),
+    }
+    missing = [name for name in required if name not in pred]
+    if missing:
+        raise ValueError(
+            "Stage 3 prediction archive is missing required keys: " + ", ".join(missing)
+        )
+
+    canonical = dict(pred)
+    for name, (dimensions, trailing_dimensions) in required.items():
+        canonical[name] = canonicalize_vggt_array(
+            name, canonical[name], dimensions, trailing_dimensions
+        )
+
+    if "world_points_conf" in canonical:
+        canonical["world_points_conf"] = canonicalize_vggt_array(
+            "world_points_conf", canonical["world_points_conf"], 3, ()
+        )
+        if canonical["world_points_conf"].shape != canonical["world_points"].shape[:3]:
+            raise ValueError(
+                "world_points_conf shape "
+                f"{canonical['world_points_conf'].shape} does not match world_points "
+                f"shape {canonical['world_points'].shape}."
+            )
+
+    if "images" in canonical:
+        canonical["images"] = canonicalize_vggt_array("images", canonical["images"], 4, ())
+        if canonical["images"].shape[0] != canonical["world_points"].shape[0]:
+            raise ValueError(
+                "images frame count "
+                f"{canonical['images'].shape[0]} does not match world_points frame count "
+                f"{canonical['world_points'].shape[0]}."
+            )
+    return canonical
+
+
 def load_colors(pred: dict, pred_path: Path, H: int, W: int, S: int) -> np.ndarray:
     """
     Load per-pixel RGB colors matching the VGGT output resolution.
@@ -181,17 +254,19 @@ def run_alignment(args):
         sys.exit(1)
 
     log.info("Loading predictions from %s", pred_path)
-    pred = np.load(str(pred_path))
-    log.info("Prediction keys: %s", list(pred.keys()))
+    with np.load(str(pred_path)) as prediction_archive:
+        pred = {name: prediction_archive[name] for name in prediction_archive.files}
+    log.info("Prediction keys: %s", list(pred))
+    try:
+        pred = canonicalize_vggt_predictions(pred)
+    except ValueError as error:
+        log.error("Incompatible Stage 3 predictions: %s", error)
+        sys.exit(1)
 
     extrinsics = pred["extrinsics"]   # (S, 3, 4)
     intrinsics = pred["intrinsics"]   # (S, 3, 3)
     S = extrinsics.shape[0]
     log.info("Loaded %d frames", S)
-
-    if "world_points" not in pred:
-        log.error("world_points not found in predictions. Keys: %s", list(pred.keys()))
-        sys.exit(1)
 
     world_points = pred["world_points"]   # (S, H, W, 3)
     _, H, W, _ = world_points.shape
