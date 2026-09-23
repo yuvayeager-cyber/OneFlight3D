@@ -127,10 +127,20 @@ Parallel safety net (independent of the pipeline above):
   verified singleton leading batch axis from every consumed saved array and
   rejects any other batch size or malformed shape. The verifier now checks
   both the raw schema and the actual `vggt_predictions.npz` archive. The
-  corrected gate and Stage 4 adapter have passed synthetic batch-first tests,
-  but the real saved archive has not yet been inspected and Stage 4 has not
-  yet run on the Colab output.
-- **Required output writers are implemented but not all locally exercised.**
+  corrected gate passed on the real saved archive.  Stage 4 then completed on
+  the Colab T4 archive: it wrote 2,741,256 UTM-aligned points (63.0 MB) in
+  9.4 s.  The GPS path was nearly collinear (condition ratio 81,668), so its
+  2.032 m transform-fit residual is not an accuracy/RMSE result and alignment
+  quality is unreliable for this sample.
+- **Real Stage 5--6 exports completed on the Colab T4 on 2026-09-23.** PLY
+  (2,741,256 points), GeoTIFF DSM (297x297 at 0.5 m), COLMAP text (one camera,
+  18 images, 500,000 points), and confidence PLY were written. Stage 5 took
+  23.3 s and Stage 6 took 13.5 s. The first confidence export exposed that
+  VGGT confidence is unbounded (1.0--32.8), not a 0--1 probability: the old
+  overlay clamped every point green. Stage 6 now uses a documented 1st--99th
+  percentile display normalization; rerun it on the Colab artifact to verify
+  the corrected overlay. Required output writers are implemented but not all
+  locally exercised.
   Stage 5 has paths for OBJ, PLY, LAS, GeoTIFF DSM, GLB/glTF, FBX, and COLMAP.
   The local synthetic run validated PLY/COLMAP only. The initial strict
   preflight saw transient 15-second `pyproj`/`rasterio` import timeouts, but a

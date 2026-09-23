@@ -52,6 +52,36 @@ def parse_args():
     return parser.parse_args()
 
 
+def normalize_confidence_for_display(confidence: np.ndarray) -> tuple[np.ndarray, dict]:
+    """Map VGGT's unbounded confidence scores to [0, 1] for a color ramp.
+
+    VGGT's point head uses an ``expp1`` confidence activation, so these scores
+    are not probabilities.  A fixed 0--1 clamp consequently turns a real VGGT
+    cloud entirely green.  Clip the display range at the 1st and 99th
+    percentiles: this preserves ordering while keeping isolated outliers from
+    flattening the useful part of the color scale.  Raw scores remain unchanged
+    in ``aligned_points.npz`` and are recorded alongside the display range.
+    """
+    confidence = np.asarray(confidence, dtype=np.float32)
+    finite = confidence[np.isfinite(confidence)]
+    if finite.size == 0:
+        raise ValueError("Confidence contains no finite values.")
+
+    lower, upper = np.percentile(finite, (1.0, 99.0))
+    if upper <= lower:
+        normalized = np.full(confidence.shape, 0.5, dtype=np.float32)
+    else:
+        normalized = np.clip((confidence - lower) / (upper - lower), 0.0, 1.0)
+
+    return normalized, {
+        "method": "linear_percentile_clip",
+        "lower_percentile": 1.0,
+        "upper_percentile": 99.0,
+        "lower_raw_confidence": float(lower),
+        "upper_raw_confidence": float(upper),
+    }
+
+
 def confidence_to_rgb_rg(conf: np.ndarray) -> np.ndarray:
     """
     Map confidence [0, 1] → RGB color.
@@ -132,14 +162,21 @@ def run_confidence_export(args):
     confidence = data["confidence"]
 
     log.info("Loaded %d points", len(points))
-    log.info("Confidence range: [%.4f, %.4f], mean: %.4f",
+    log.info("Raw VGGT confidence range: [%.4f, %.4f], mean: %.4f",
              confidence.min(), confidence.max(), confidence.mean())
+
+    normalized_confidence, normalization = normalize_confidence_for_display(confidence)
+    log.info(
+        "Display normalization: %.1fth--%.1fth percentile [%.4f, %.4f] -> [0, 1]",
+        normalization["lower_percentile"], normalization["upper_percentile"],
+        normalization["lower_raw_confidence"], normalization["upper_raw_confidence"],
+    )
 
     # Color by confidence
     if args.colormap == "rygb":
-        colors = confidence_to_rgb_rygb(confidence)
+        colors = confidence_to_rgb_rygb(normalized_confidence)
     else:
-        colors = confidence_to_rgb_rg(confidence)
+        colors = confidence_to_rgb_rg(normalized_confidence)
 
     # Write PLY
     output_dir = Path(args.output_dir)
@@ -156,17 +193,19 @@ def run_confidence_export(args):
         "confidence_mean": float(confidence.mean()),
         "confidence_median": float(np.median(confidence)),
         "confidence_std": float(confidence.std()),
-        "pct_high_conf": float((confidence >= 0.8).sum() / len(confidence) * 100),
-        "pct_mid_conf": float(((confidence >= 0.4) & (confidence < 0.8)).sum() / len(confidence) * 100),
-        "pct_low_conf": float((confidence < 0.4).sum() / len(confidence) * 100),
+        "display_normalization": normalization,
+        "pct_high_display_conf": float((normalized_confidence >= 0.8).sum() / len(confidence) * 100),
+        "pct_mid_display_conf": float(((normalized_confidence >= 0.4) & (normalized_confidence < 0.8)).sum() / len(confidence) * 100),
+        "pct_low_display_conf": float((normalized_confidence < 0.4).sum() / len(confidence) * 100),
         "colormap": args.colormap,
     }
 
     stats_path = output_dir / "confidence_stats.json"
     with open(stats_path, "w") as f:
         json.dump(stats, f, indent=2)
-    log.info("Stats: %.1f%% high, %.1f%% mid, %.1f%% low confidence",
-             stats["pct_high_conf"], stats["pct_mid_conf"], stats["pct_low_conf"])
+    log.info("Display stats: %.1f%% high, %.1f%% mid, %.1f%% low confidence",
+             stats["pct_high_display_conf"], stats["pct_mid_display_conf"],
+             stats["pct_low_display_conf"])
     log.info("Statistics written to %s", stats_path)
 
 
